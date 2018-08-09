@@ -456,6 +456,8 @@ spec:
               mountPath: /etc/etcd
             - name: http-cfg
               mountPath: /etc/http
+            - name: var-run
+              mountPath: /var/run
           readinessProbe:
             httpGet:
               path: /readiness
@@ -477,6 +479,10 @@ spec:
         - name: http-cfg
           configMap:
             name: contiv-ksr-http-cfg
+        - name: var-run
+          hostPath:
+            path: /var/run
+
 
 ---
 

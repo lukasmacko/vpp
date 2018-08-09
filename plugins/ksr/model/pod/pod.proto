@@ -104,4 +104,10 @@ message Pod {
   // There must be at least one container in a Pod.
   // Cannot be updated.
   repeated Container container = 6;
+
+  // Network namespace used by the pod
+  string network_namespace = 7;
+
+  // Container ID of pod's sandbox container
+  string pod_sanbox = 8;
 }

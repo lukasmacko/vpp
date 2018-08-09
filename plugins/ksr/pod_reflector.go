@@ -23,7 +23,12 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
+	"fmt"
 	"github.com/contiv/vpp/plugins/ksr/model/pod"
+	"github.com/fsouza/go-dockerclient"
+	"github.com/ligato/cn-infra/logging"
+	"os"
+	"strings"
 )
 
 // PodReflector subscribes to K8s cluster to watch for changes in the
@@ -31,6 +36,7 @@ import (
 // into the selected key-value store.
 type PodReflector struct {
 	Reflector
+	dockerClient *docker.Client
 }
 
 // Init subscribes to K8s cluster to watch for changes in the configuration
@@ -63,6 +69,17 @@ func (pr *PodReflector) Init(stopCh2 <-chan struct{}, wg *sync.WaitGroup) error 
 			return pr.podToProto(k8sPod), pod.Key(k8sPod.Name, k8sPod.Namespace), true
 		},
 	}
+	var err error
+	pr.dockerClient, err = docker.NewClientFromEnv()
+	if err != nil {
+		pr.Log.WithFields(logging.Fields{
+			"DOCKER_HOST":       os.Getenv("DOCKER_HOST"),
+			"DOCKER_TLS_VERIFY": os.Getenv("DOCKER_TLS_VERIFY"),
+			"DOCKER_CERT_PATH":  os.Getenv("DOCKER_CERT_PATH"),
+		}).Errorf("Failed to get docker client instance from the environment variables: %v", err)
+		return err
+	}
+	pr.Log.Debugf("Using docker client endpoint: %+v", pr.dockerClient.Endpoint())
 
 	return pr.ksrInit(stopCh2, wg, pod.KeyPrefix(), "pods", &coreV1.Pod{}, podReflectorFuncs)
 }
@@ -130,6 +147,7 @@ func (pr *PodReflector) podToProto(k8sPod *coreV1.Pod) *pod.Pod {
 	}
 	podProto.IpAddress = k8sPod.Status.PodIP
 	podProto.HostIpAddress = k8sPod.Status.HostIP
+	podProto.PodSanbox, podProto.NetworkNamespace = pr.getPodSanbox(k8sPod)
 	for _, container := range k8sPod.Spec.Containers {
 		podProto.Container = append(podProto.Container, pr.containerToProto(&container))
 	}
@@ -157,4 +175,42 @@ func (pr *PodReflector) containerToProto(container *coreV1.Container) *pod.Pod_C
 		containerProto.Port = append(containerProto.Port, portProto)
 	}
 	return containerProto
+}
+
+func (pr *PodReflector) getPodSanbox(k8sPod *coreV1.Pod) (containerID string, networkNS string) {
+	const sandboxIDLabelKey = "io.kubernetes.sandbox.id"
+
+containerLoop:
+	for _, container := range k8sPod.Status.ContainerStatuses {
+		if container.ContainerID == "" {
+			continue
+		}
+
+		details, err := pr.dockerClient.InspectContainer(strings.TrimPrefix(container.ContainerID, "docker://"))
+		if err != nil {
+			pr.Log.WithField("containerID", container.ContainerID).Warn(err)
+			continue
+		}
+		if details != nil && details.Config != nil {
+			for k, v := range details.Config.Labels {
+				if k == sandboxIDLabelKey {
+					containerID = v
+					break containerLoop
+				}
+
+			}
+		}
+	}
+	if containerID == "" {
+		pr.Log.WithFields(logging.Fields{"name": k8sPod.Name, "ns": k8sPod.Namespace}).Warn("unable to find sandbox id")
+		return "", ""
+	}
+
+	details, err := pr.dockerClient.InspectContainer(containerID)
+	if err != nil {
+		pr.Log.Warnf("sandbox not found for %v:%v, %v", k8sPod.Name, k8sPod.Namespace, err)
+		return "", ""
+	}
+
+	return containerID, fmt.Sprintf("/proc/%d/ns/net", details.State.Pid)
 }

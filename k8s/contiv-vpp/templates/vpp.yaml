@@ -726,6 +726,8 @@ spec:
               mountPath: /var/http
               readOnly: true
             {{- end }}
+            - name: var-run
+              mountPath: /var/run
           readinessProbe:
             httpGet:
               path: /readiness
@@ -795,6 +797,10 @@ spec:
               path: {{ .Values.http.serverKey }}
           {{- end }}
         {{- end }}
+        # used to access docker socket
+        - name: var-run
+          hostPath:
+            path: /var/run
 
 ---
 
