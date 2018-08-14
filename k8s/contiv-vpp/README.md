@@ -21,6 +21,13 @@ helm template --name my-release ../contiv-vpp > manifest.yaml
 kubectl apply -f manifest.yaml
 ```
 
+To install without tiller for arm64, you can generate the manifest from this chart and install via kubectl:
+
+```console
+helm template --name my-release ../contiv-vpp -f ./values-arm64.yaml,./values.yaml > manifest-arm64.yaml
+kubectl apply -f manifest-arm64.yaml
+```
+
 To install with tiller, you will most likely need to modify the tiller manifest. The manifest can be optained with:
 
 ```console
@@ -115,3 +122,7 @@ Parameter | Description | Default
 `http.basicAuth` | credentials to be used by basic-auth, format <username>:<password>| `user:pass`
 `telemetry.pollingInterval` | Default polling interval for telemetry plugin (nanoseconds) | `30000000000`
 `telemetry.disabled` | Disables the telemetry plugin | `true`
+`bolt.usePersistentVolume` | Use Kubernetes persistent volume (when enabled, disables dataDir hostPath) | `False`
+`bolt.persistentVolumeSize` | Size of Kubernetes persistent volume | `2Gi`
+`bolt.persistentVolumeStorageClass` | Kubernetes persistent volume storage class (use "-" for an empty storage class) | (no value)
+`bolt.dataDir` | Use hostPath of this directory to persist bolt data (ignored if usePersistentVolume is true) | `/var/bolt`

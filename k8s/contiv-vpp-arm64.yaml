@@ -45,19 +45,12 @@ data:
       VxlanCIDR: 192.168.30.0/24
       NodeInterconnectDHCP: False
   logs.conf: |
-    default-level: debug
+    defaultlevel: debug
   grpc.conf: |
     network: unix
     endpoint: /var/run/contiv/cni.sock
   http.conf: |
-    endpoint: 0.0.0.0:9999
-  bolt.conf: |
-    db-path: /var/bolt/bolt.db
-    file-mode: 432
-    lock-timeout: 0
-  telemetry.conf: |
-    polling-interval: 30000000000
-    disabled: true
+      endpoint: 0.0.0.0:9999
 
 ---
 
@@ -126,7 +119,7 @@ spec:
 
       containers:
         - name: contiv-etcd
-          image: quay.io/coreos/etcd:v3.1.10
+          image: quay.io/coreos/etcd:v3.3.5-arm64
           imagePullPolicy: IfNotPresent
           env:
             - name: CONTIV_ETCD_IP
@@ -135,6 +128,8 @@ spec:
                   fieldPath: status.podIP
             - name: ETCDCTL_API
               value: "3"
+            - name: ETCD_UNSUPPORTED_ARCH
+              value: "arm64"
           command:
             - /bin/sh
           args:
@@ -246,7 +241,7 @@ spec:
       # This container installs the Contiv CNI binaries
       # and CNI network config file on each node.
       - name: contiv-cni
-        image: contivvpp/cni:latest
+        image: contivvpp/cni-arm64:latest
         imagePullPolicy: IfNotPresent
         env:
           - name: SLEEP
@@ -256,18 +251,16 @@ spec:
             name: cni-bin-dir
           - mountPath: /etc/cni/net.d
             name: cni-net-dir
-          - mountPath: /var/run/contiv
-            name: contiv-run
       # This init container waits until etcd is started
       - name: wait-foretcd
         env:
           - name: ETCDPORT
             value: "32379"
-        image: busybox:latest
+        image: arm64v8/busybox:latest
         command: ['sh', '-c', 'until nc -w 2 127.0.0.1:$ETCDPORT; do echo waiting for etcd; sleep 2; done;']
       # This init container extracts/copies VPP LD_PRELOAD libs and default VPP config to the host.
       - name: vpp-init
-        image: contivvpp/vswitch:latest
+        image: contivvpp/vswitch-arm64:latest
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh
@@ -310,7 +303,7 @@ spec:
         # Runs contiv-vswitch container on each Kubernetes node.
         # It contains the vSwitch VPP and its management agent.
         - name: contiv-vswitch
-          image: contivvpp/vswitch:latest
+          image: contivvpp/vswitch-arm64:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -340,13 +333,7 @@ spec:
                   fieldPath: spec.nodeName
             - name: ETCD_CONFIG
               value: "/etc/etcd/etcd.conf"
-            - name: BOLT_CONFIG
-              value: "/etc/agent/bolt.conf"
-            - name: TELEMETRY_CONFIG
-              value: "/etc/agent/telemetry.conf"
           volumeMounts:
-            - name: var-bolt
-              mountPath: /var/bolt
             - name: etcd-cfg
               mountPath: /etc/etcd
             - name: vpp-cfg
@@ -411,9 +398,6 @@ spec:
         - name: govpp-plugin-cfg
           configMap:
             name: govpp-cfg
-        - name: var-bolt
-          hostPath:
-            path: /var/bolt
 
 ---
 
@@ -457,7 +441,7 @@ spec:
           env:
           - name: ETCDPORT
             value: "32379"
-          image: busybox:latest
+          image: arm64v8/busybox:latest
           command: ['sh', '-c', 'until nc -w 2 127.0.0.1:$ETCDPORT; do echo waiting for etcd; sleep 2; done;']
 
       containers:
@@ -474,8 +458,6 @@ spec:
               mountPath: /etc/etcd
             - name: http-cfg
               mountPath: /etc/http
-            - name: var-run
-              mountPath: /var/run
           readinessProbe:
             httpGet:
               path: /readiness
@@ -497,10 +479,6 @@ spec:
         - name: http-cfg
           configMap:
             name: contiv-ksr-http-cfg
-        - name: var-run
-          hostPath:
-            path: /var/run
-
 
 ---
 
