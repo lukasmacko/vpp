@@ -27,6 +27,7 @@ import (
 	"github.com/contiv/vpp/plugins/contiv/containeridx/model"
 	"github.com/contiv/vpp/plugins/contiv/ipam"
 	"github.com/contiv/vpp/plugins/contiv/model/cni"
+	"github.com/contiv/vpp/plugins/ksr/model/pod"
 	"github.com/contiv/vpp/plugins/kvdbproxy"
 	"github.com/gogo/protobuf/proto"
 	"github.com/ligato/cn-infra/datasync"
@@ -987,6 +988,11 @@ func (s *remoteCNIserver) configureContainerConnectivity(request *cni.CNIRequest
 	id := request.ContainerId
 	config.ID = id
 
+	k8sPod := &pod.Pod{}
+	k8sPod.PodSanbox = request.ContainerId
+	k8sPod.NetworkNamespace = request.NetworkNamespace
+	k8sPod.InterfaceName = request.InterfaceName
+
 	defer func() {
 		if err != nil {
 			if persisted {
@@ -1012,14 +1018,14 @@ func (s *remoteCNIserver) configureContainerConnectivity(request *cni.CNIRequest
 	// prepare configuration for the POD interface
 	revertTxn = s.vppTxnFactory().Delete()
 	txn = s.vppTxnFactory().Put()
-	err = s.configurePodInterface(request, podIP, config, txn, revertTxn)
+	err = s.configurePodInterface(k8sPod, podIP, config, txn, revertTxn)
 	if err != nil {
 		s.Logger.Error(err)
 		return s.generateCniErrorReply(err)
 	}
 
 	// prepare VPP-side of the POD-related configuration
-	err = s.configurePodVPPSide(request, podIP, config, txn, revertTxn)
+	err = s.configurePodVPPSide(k8sPod, podIP, config, txn, revertTxn)
 	if err != nil {
 		s.Logger.Error(err)
 		return s.generateCniErrorReply(err)
@@ -1188,7 +1194,7 @@ func (s *remoteCNIserver) unconfigureContainerConnectivityWithoutLock(request *c
 
 // configurePodInterface prepares transaction <txn> to configure POD's
 // network interface and its routes + ARPs.
-func (s *remoteCNIserver) configurePodInterface(request *cni.CNIRequest, podIP net.IP, config *PodConfig,
+func (s *remoteCNIserver) configurePodInterface(k8sPod *pod.Pod, podIP net.IP, config *PodConfig,
 	txn linuxclient.PutDSL, revertTxn linuxclient.DeleteDSL) error {
 
 	// this is necessary for the latest docker where ipv6 is disabled by default.
@@ -1196,7 +1202,7 @@ func (s *remoteCNIserver) configurePodInterface(request *cni.CNIRequest, podIP n
 	// try to reassign all IPs once interfaces is moved to a namespace. Without explicitly enabled ipv6,
 	// we receive an error while moving interface to a namespace.
 	if !s.test {
-		err := s.enableIPv6(request)
+		err := s.enableIPv6(k8sPod)
 		if err != nil {
 			s.Logger.Error("unable to enable ipv6 in the namespace")
 			return err
@@ -1214,8 +1220,8 @@ func (s *remoteCNIserver) configurePodInterface(request *cni.CNIRequest, podIP n
 	// create VPP to POD interconnect interface
 	if s.useTAPInterfaces {
 		// TAP interface
-		config.VppIf = s.tapFromRequest(request, podIP.String(), !s.disableTCPstack, podIPCIDR)
-		config.PodTap = s.podTAP(request, podIPNet)
+		config.VppIf = s.tapFromRequest(k8sPod, podIP.String(), !s.disableTCPstack, podIPCIDR)
+		config.PodTap = s.podTAP(k8sPod, podIPNet)
 
 		podIfName = config.PodTap.Name
 
@@ -1227,9 +1233,9 @@ func (s *remoteCNIserver) configurePodInterface(request *cni.CNIRequest, podIP n
 		txn.LinuxInterface(config.PodTap)
 	} else {
 		// veth pair + AF_PACKET
-		config.Veth1 = s.veth1FromRequest(request, podIPCIDR)
-		config.Veth2 = s.veth2FromRequest(request)
-		config.VppIf = s.afpacketFromRequest(request, podIP.String(), !s.disableTCPstack, podIPCIDR)
+		config.Veth1 = s.veth1FromRequest(k8sPod, podIPCIDR)
+		config.Veth2 = s.veth2FromRequest(k8sPod)
+		config.VppIf = s.afpacketFromRequest(k8sPod, podIP.String(), !s.disableTCPstack, podIPCIDR)
 
 		txn.LinuxInterface(config.Veth1).
 			LinuxInterface(config.Veth2).
@@ -1239,15 +1245,15 @@ func (s *remoteCNIserver) configurePodInterface(request *cni.CNIRequest, podIP n
 	}
 
 	// link scope route
-	config.PodLinkRoute = s.podLinkRouteFromRequest(request, podIfName)
+	config.PodLinkRoute = s.podLinkRouteFromRequest(k8sPod, podIfName)
 	txn.LinuxRoute(config.PodLinkRoute)
 
 	// ARP to VPP
-	config.PodARPEntry = s.podArpEntry(request, podIfName, config.VppIf.PhysAddress)
+	config.PodARPEntry = s.podArpEntry(k8sPod, podIfName, config.VppIf.PhysAddress)
 	txn.LinuxArpEntry(config.PodARPEntry)
 
 	// Add default route for the container
-	config.PodDefaultRoute = s.podDefaultRouteFromRequest(request, podIfName)
+	config.PodDefaultRoute = s.podDefaultRouteFromRequest(k8sPod, podIfName)
 	txn.LinuxRoute(config.PodDefaultRoute)
 
 	return nil
@@ -1270,15 +1276,15 @@ func (s *remoteCNIserver) unconfigurePodInterface(request *cni.CNIRequest, confi
 
 // configurePodVPPSide prepares transaction <txn> to configure vswitch VPP part
 // of the POD networking.
-func (s *remoteCNIserver) configurePodVPPSide(request *cni.CNIRequest, podIP net.IP, config *PodConfig,
+func (s *remoteCNIserver) configurePodVPPSide(k8sPod *pod.Pod, podIP net.IP, config *PodConfig,
 	txn linuxclient.PutDSL, revertTxn linuxclient.DeleteDSL) error {
 
 	podIPCIDR := podIP.String() + "/32"
 
 	if !s.disableTCPstack {
 		// VPP TCP stack config
-		config.Loopback = s.loopbackFromRequest(request, podIP.String())
-		config.AppNamespace = s.appNamespaceFromRequest(request)
+		config.Loopback = s.loopbackFromRequest(k8sPod, podIP.String())
+		config.AppNamespace = s.appNamespaceFromRequest(k8sPod)
 		config.StnRule = s.stnRule(podIP, config.VppIf.Name)
 
 		txn.VppInterface(config.Loopback).
@@ -1289,7 +1295,7 @@ func (s *remoteCNIserver) configurePodVPPSide(request *cni.CNIRequest, podIP net
 			StnRule(config.StnRule.RuleName)
 	} else {
 		// route to PodIP via AF_PACKET / TAP
-		config.VppRoute = s.vppRouteFromRequest(request, podIPCIDR)
+		config.VppRoute = s.vppRouteFromRequest(k8sPod, podIPCIDR)
 
 		txn.StaticRoute(config.VppRoute)
 		revertTxn.StaticRoute(config.VppRoute.VrfId, config.VppRoute.DstIpAddr, config.VppRoute.NextHopAddr)

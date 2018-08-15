@@ -33,6 +33,7 @@ import (
 	vpp_l4 "github.com/ligato/vpp-agent/plugins/vpp/model/l4"
 	"github.com/ligato/vpp-agent/plugins/vpp/model/stn"
 
+	"github.com/contiv/vpp/plugins/ksr/model/pod"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
@@ -153,9 +154,9 @@ func (s *remoteCNIserver) disableTCPChecksumOffload(request *cni.CNIRequest) err
 	return nil
 }
 
-func (s *remoteCNIserver) enableIPv6(request *cni.CNIRequest) error {
+func (s *remoteCNIserver) enableIPv6(k8sPod *pod.Pod) error {
 	// parse PID from the network namespace
-	pid, err := s.getPIDFromNwNsPath(request.NetworkNamespace)
+	pid, err := s.getPIDFromNwNsPath(k8sPod.NetworkNamespace)
 	if err != nil {
 		return err
 	}
@@ -198,46 +199,46 @@ func (s *remoteCNIserver) getPIDFromNwNsPath(ns string) (int, error) {
 	return pid, nil
 }
 
-func (s *remoteCNIserver) veth1NameFromRequest(request *cni.CNIRequest) string {
-	return request.InterfaceName + request.ContainerId
+func (s *remoteCNIserver) veth1NameFromRequest(k8sPod *pod.Pod) string {
+	return k8sPod.InterfaceName + k8sPod.PodSanbox
 }
 
-func (s *remoteCNIserver) veth1HostIfNameFromRequest(request *cni.CNIRequest) string {
-	return request.InterfaceName
+func (s *remoteCNIserver) veth1HostIfNameFromRequest(k8sPod *pod.Pod) string {
+	return k8sPod.InterfaceName
 }
 
-func (s *remoteCNIserver) veth2NameFromRequest(request *cni.CNIRequest) string {
-	return request.ContainerId
+func (s *remoteCNIserver) veth2NameFromRequest(k8sPod *pod.Pod) string {
+	return k8sPod.PodSanbox
 }
 
-func (s *remoteCNIserver) veth2HostIfNameFromRequest(request *cni.CNIRequest) string {
-	if len(request.ContainerId) > linuxIfMaxLen {
-		return request.ContainerId[:linuxIfMaxLen]
+func (s *remoteCNIserver) veth2HostIfNameFromRequest(k8sPod *pod.Pod) string {
+	if len(k8sPod.PodSanbox) > linuxIfMaxLen {
+		return k8sPod.PodSanbox[:linuxIfMaxLen]
 	}
-	return request.ContainerId
+	return k8sPod.PodSanbox
 }
 
-func (s *remoteCNIserver) afpacketNameFromRequest(request *cni.CNIRequest) string {
-	return afPacketNamePrefix + s.veth2NameFromRequest(request)
+func (s *remoteCNIserver) afpacketNameFromRequest(k8sPod *pod.Pod) string {
+	return afPacketNamePrefix + s.veth2NameFromRequest(k8sPod)
 }
 
-func (s *remoteCNIserver) tapNameFromRequest(request *cni.CNIRequest) string {
-	return tapNamePrefix + s.tapTmpHostNameFromRequest(request)
+func (s *remoteCNIserver) tapNameFromRequest(k8sPod *pod.Pod) string {
+	return tapNamePrefix + s.tapTmpHostNameFromRequest(k8sPod)
 }
 
-func (s *remoteCNIserver) tapTmpHostNameFromRequest(request *cni.CNIRequest) string {
-	if len(request.ContainerId) > linuxIfMaxLen {
-		return request.ContainerId[:linuxIfMaxLen]
+func (s *remoteCNIserver) tapTmpHostNameFromRequest(k8sPod *pod.Pod) string {
+	if len(k8sPod.PodSanbox) > linuxIfMaxLen {
+		return k8sPod.PodSanbox[:linuxIfMaxLen]
 	}
-	return request.ContainerId
+	return k8sPod.PodSanbox
 }
 
-func (s *remoteCNIserver) tapHostNameFromRequest(request *cni.CNIRequest) string {
-	return request.InterfaceName
+func (s *remoteCNIserver) tapHostNameFromRequest(k8sPod *pod.Pod) string {
+	return k8sPod.InterfaceName
 }
 
-func (s *remoteCNIserver) loopbackNameFromRequest(request *cni.CNIRequest) string {
-	return "loop" + s.veth2NameFromRequest(request)
+func (s *remoteCNIserver) loopbackNameFromRequest(k8sPod *pod.Pod) string {
+	return "loop" + s.veth2NameFromRequest(k8sPod)
 }
 
 func (s *remoteCNIserver) ipAddrForPodVPPIf(podIP string) string {
@@ -264,48 +265,48 @@ func (s *remoteCNIserver) generateHwAddrForPodVPPIf() string {
 	return hwAddr.String()
 }
 
-func (s *remoteCNIserver) veth1FromRequest(request *cni.CNIRequest, podIP string) *linux_intf.LinuxInterfaces_Interface {
+func (s *remoteCNIserver) veth1FromRequest(k8sPod *pod.Pod, podIP string) *linux_intf.LinuxInterfaces_Interface {
 	return &linux_intf.LinuxInterfaces_Interface{
-		Name:        s.veth1NameFromRequest(request),
+		Name:        s.veth1NameFromRequest(k8sPod),
 		Type:        linux_intf.LinuxInterfaces_VETH,
 		Mtu:         s.config.MTUSize,
 		Enabled:     true,
-		HostIfName:  s.veth1HostIfNameFromRequest(request),
+		HostIfName:  s.veth1HostIfNameFromRequest(k8sPod),
 		PhysAddress: s.hwAddrForContainer(),
 		Veth: &linux_intf.LinuxInterfaces_Interface_Veth{
-			PeerIfName: s.veth2NameFromRequest(request),
+			PeerIfName: s.veth2NameFromRequest(k8sPod),
 		},
 		IpAddresses: []string{podIP},
 		Namespace: &linux_intf.LinuxInterfaces_Interface_Namespace{
-			Name:     request.ContainerId,
+			Name:     k8sPod.PodSanbox,
 			Type:     linux_intf.LinuxInterfaces_Interface_Namespace_FILE_REF_NS,
-			Filepath: request.NetworkNamespace,
+			Filepath: k8sPod.NetworkNamespace,
 		},
 	}
 }
 
-func (s *remoteCNIserver) veth2FromRequest(request *cni.CNIRequest) *linux_intf.LinuxInterfaces_Interface {
+func (s *remoteCNIserver) veth2FromRequest(k8sPod *pod.Pod) *linux_intf.LinuxInterfaces_Interface {
 	return &linux_intf.LinuxInterfaces_Interface{
-		Name:       s.veth2NameFromRequest(request),
+		Name:       s.veth2NameFromRequest(k8sPod),
 		Type:       linux_intf.LinuxInterfaces_VETH,
 		Mtu:        s.config.MTUSize,
 		Enabled:    true,
-		HostIfName: s.veth2HostIfNameFromRequest(request),
+		HostIfName: s.veth2HostIfNameFromRequest(k8sPod),
 		Veth: &linux_intf.LinuxInterfaces_Interface_Veth{
-			PeerIfName: s.veth1NameFromRequest(request),
+			PeerIfName: s.veth1NameFromRequest(k8sPod),
 		},
 	}
 }
 
-func (s *remoteCNIserver) afpacketFromRequest(request *cni.CNIRequest, podIP string, configureContainerProxy bool, containerProxyIP string) *vpp_intf.Interfaces_Interface {
+func (s *remoteCNIserver) afpacketFromRequest(k8sPod *pod.Pod, podIP string, configureContainerProxy bool, containerProxyIP string) *vpp_intf.Interfaces_Interface {
 	af := &vpp_intf.Interfaces_Interface{
-		Name:    s.afpacketNameFromRequest(request),
+		Name:    s.afpacketNameFromRequest(k8sPod),
 		Type:    vpp_intf.InterfaceType_AF_PACKET_INTERFACE,
 		Mtu:     s.config.MTUSize,
 		Enabled: true,
 		Vrf:     s.GetPodVrfID(),
 		Afpacket: &vpp_intf.Interfaces_Interface_Afpacket{
-			HostIfName: s.veth2HostIfNameFromRequest(request),
+			HostIfName: s.veth2HostIfNameFromRequest(k8sPod),
 		},
 		IpAddresses: []string{s.ipAddrForPodVPPIf(podIP)},
 		PhysAddress: s.generateHwAddrForPodVPPIf(),
@@ -316,15 +317,15 @@ func (s *remoteCNIserver) afpacketFromRequest(request *cni.CNIRequest, podIP str
 	return af
 }
 
-func (s *remoteCNIserver) tapFromRequest(request *cni.CNIRequest, podIP string, configureContainerProxy bool, containerProxyIP string) *vpp_intf.Interfaces_Interface {
+func (s *remoteCNIserver) tapFromRequest(k8sPod *pod.Pod, podIP string, configureContainerProxy bool, containerProxyIP string) *vpp_intf.Interfaces_Interface {
 	tap := &vpp_intf.Interfaces_Interface{
-		Name:    s.tapNameFromRequest(request),
+		Name:    s.tapNameFromRequest(k8sPod),
 		Type:    vpp_intf.InterfaceType_TAP_INTERFACE,
 		Mtu:     s.config.MTUSize,
 		Enabled: true,
 		Vrf:     s.GetPodVrfID(),
 		Tap: &vpp_intf.Interfaces_Interface_Tap{
-			HostIfName: s.tapTmpHostNameFromRequest(request),
+			HostIfName: s.tapTmpHostNameFromRequest(k8sPod),
 		},
 		IpAddresses: []string{s.ipAddrForPodVPPIf(podIP)},
 		PhysAddress: s.generateHwAddrForPodVPPIf(),
@@ -340,29 +341,29 @@ func (s *remoteCNIserver) tapFromRequest(request *cni.CNIRequest, podIP string, 
 	return tap
 }
 
-func (s *remoteCNIserver) podTAP(request *cni.CNIRequest, podIPNet *net.IPNet) *linux_intf.LinuxInterfaces_Interface {
+func (s *remoteCNIserver) podTAP(k8sPod *pod.Pod, podIPNet *net.IPNet) *linux_intf.LinuxInterfaces_Interface {
 	return &linux_intf.LinuxInterfaces_Interface{
-		Name:    "pod-" + s.tapTmpHostNameFromRequest(request),
+		Name:    "pod-" + s.tapTmpHostNameFromRequest(k8sPod),
 		Type:    linux_intf.LinuxInterfaces_AUTO_TAP,
 		Mtu:     s.config.MTUSize,
 		Enabled: true,
 		Tap: &linux_intf.LinuxInterfaces_Interface_Tap{
-			TempIfName: s.tapTmpHostNameFromRequest(request),
+			TempIfName: s.tapTmpHostNameFromRequest(k8sPod),
 		},
-		HostIfName: s.tapHostNameFromRequest(request),
+		HostIfName: s.tapHostNameFromRequest(k8sPod),
 		Namespace: &linux_intf.LinuxInterfaces_Interface_Namespace{
-			Name:     request.ContainerId,
+			Name:     k8sPod.PodSanbox,
 			Type:     linux_intf.LinuxInterfaces_Interface_Namespace_FILE_REF_NS,
-			Filepath: request.NetworkNamespace,
+			Filepath: k8sPod.NetworkNamespace,
 		},
 		PhysAddress: s.hwAddrForContainer(),
 		IpAddresses: []string{podIPNet.String()},
 	}
 }
 
-func (s *remoteCNIserver) loopbackFromRequest(request *cni.CNIRequest, loopIP string) *vpp_intf.Interfaces_Interface {
+func (s *remoteCNIserver) loopbackFromRequest(k8sPod *pod.Pod, loopIP string) *vpp_intf.Interfaces_Interface {
 	return &vpp_intf.Interfaces_Interface{
-		Name:        s.loopbackNameFromRequest(request),
+		Name:        s.loopbackNameFromRequest(k8sPod),
 		Type:        vpp_intf.InterfaceType_SOFTWARE_LOOPBACK,
 		Enabled:     true,
 		IpAddresses: []string{loopIP},
@@ -370,15 +371,15 @@ func (s *remoteCNIserver) loopbackFromRequest(request *cni.CNIRequest, loopIP st
 	}
 }
 
-func (s *remoteCNIserver) vppRouteFromRequest(request *cni.CNIRequest, podIP string) *vpp_l3.StaticRoutes_Route {
+func (s *remoteCNIserver) vppRouteFromRequest(k8sPod *pod.Pod, podIP string) *vpp_l3.StaticRoutes_Route {
 	route := &vpp_l3.StaticRoutes_Route{
 		DstIpAddr: podIP,
 		VrfId:     s.GetPodVrfID(),
 	}
 	if s.useTAPInterfaces {
-		route.OutgoingInterface = s.tapNameFromRequest(request)
+		route.OutgoingInterface = s.tapNameFromRequest(k8sPod)
 	} else {
-		route.OutgoingInterface = s.afpacketNameFromRequest(request)
+		route.OutgoingInterface = s.afpacketNameFromRequest(k8sPod)
 	}
 	return route
 }
@@ -391,11 +392,11 @@ func (s *remoteCNIserver) stnRule(ipAddress net.IP, ifname string) *stn.STN_Rule
 	}
 }
 
-func (s *remoteCNIserver) appNamespaceFromRequest(request *cni.CNIRequest) *vpp_l4.AppNamespaces_AppNamespace {
+func (s *remoteCNIserver) appNamespaceFromRequest(k8sPod *pod.Pod) *vpp_l4.AppNamespaces_AppNamespace {
 	return &vpp_l4.AppNamespaces_AppNamespace{
-		NamespaceId: request.ContainerId,
+		NamespaceId: k8sPod.PodSanbox,
 		Secret:      42,
-		Interface:   s.loopbackNameFromRequest(request),
+		Interface:   s.loopbackNameFromRequest(k8sPod),
 	}
 }
 
@@ -408,14 +409,14 @@ func (s *remoteCNIserver) vppArpEntry(podIfName string, podIP net.IP, macAddr st
 	}
 }
 
-func (s *remoteCNIserver) podArpEntry(request *cni.CNIRequest, ifName string, macAddr string) *linux_l3.LinuxStaticArpEntries_ArpEntry {
+func (s *remoteCNIserver) podArpEntry(k8sPod *pod.Pod, ifName string, macAddr string) *linux_l3.LinuxStaticArpEntries_ArpEntry {
 	containerNs := &linux_l3.LinuxStaticArpEntries_ArpEntry_Namespace{
-		Name:     request.ContainerId,
+		Name:     k8sPod.PodSanbox,
 		Type:     linux_l3.LinuxStaticArpEntries_ArpEntry_Namespace_FILE_REF_NS,
-		Filepath: request.NetworkNamespace,
+		Filepath: k8sPod.NetworkNamespace,
 	}
 	return &linux_l3.LinuxStaticArpEntries_ArpEntry{
-		Name:      request.ContainerId,
+		Name:      k8sPod.PodSanbox,
 		Namespace: containerNs,
 		Interface: ifName,
 		IpFamily: &linux_l3.LinuxStaticArpEntries_ArpEntry_IpFamily{
@@ -429,14 +430,14 @@ func (s *remoteCNIserver) podArpEntry(request *cni.CNIRequest, ifName string, ma
 	}
 }
 
-func (s *remoteCNIserver) podLinkRouteFromRequest(request *cni.CNIRequest, ifName string) *linux_l3.LinuxStaticRoutes_Route {
+func (s *remoteCNIserver) podLinkRouteFromRequest(k8sPod *pod.Pod, ifName string) *linux_l3.LinuxStaticRoutes_Route {
 	containerNs := &linux_l3.LinuxStaticRoutes_Route_Namespace{
-		Name:     request.ContainerId,
+		Name:     k8sPod.PodSanbox,
 		Type:     linux_l3.LinuxStaticRoutes_Route_Namespace_FILE_REF_NS,
-		Filepath: request.NetworkNamespace,
+		Filepath: k8sPod.NetworkNamespace,
 	}
 	return &linux_l3.LinuxStaticRoutes_Route{
-		Name:      "LINK-" + request.ContainerId,
+		Name:      "LINK-" + k8sPod.PodSanbox,
 		Default:   false,
 		Namespace: containerNs,
 		Interface: ifName,
@@ -447,14 +448,14 @@ func (s *remoteCNIserver) podLinkRouteFromRequest(request *cni.CNIRequest, ifNam
 	}
 }
 
-func (s *remoteCNIserver) podDefaultRouteFromRequest(request *cni.CNIRequest, ifName string) *linux_l3.LinuxStaticRoutes_Route {
+func (s *remoteCNIserver) podDefaultRouteFromRequest(k8sPod *pod.Pod, ifName string) *linux_l3.LinuxStaticRoutes_Route {
 	containerNs := &linux_l3.LinuxStaticRoutes_Route_Namespace{
-		Name:     request.ContainerId,
+		Name:     k8sPod.PodSanbox,
 		Type:     linux_l3.LinuxStaticRoutes_Route_Namespace_FILE_REF_NS,
-		Filepath: request.NetworkNamespace,
+		Filepath: k8sPod.NetworkNamespace,
 	}
 	return &linux_l3.LinuxStaticRoutes_Route{
-		Name:      "DEFAULT-" + request.ContainerId,
+		Name:      "DEFAULT-" + k8sPod.NetworkNamespace,
 		Default:   true,
 		Namespace: containerNs,
 		Interface: ifName,

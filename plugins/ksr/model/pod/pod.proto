@@ -110,4 +110,7 @@ message Pod {
 
   // Container ID of pod's sandbox container
   string pod_sanbox = 8;
+
+  // Name of the interface inside the sandbox container.
+  string interface_name = 9;
 }
