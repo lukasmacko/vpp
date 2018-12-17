@@ -255,6 +255,9 @@ type NodeConfig struct {
 	nodeconfigcrd.NodeConfigSpec
 }
 
+// ErrorNodeConfigNotAvailable is returned if nodeconfig is not found neither in ETCD nor Bolt db.
+var ErrorNodeConfigNotAvailable = errors.New("nodeConfig CRD is not available")
+
 // GetNodeConfig returns configuration specific to a given node, or nil if none was found.
 func (cfg *Config) getNodeConfig(nodeName string) *NodeConfig {
 	for _, nodeConfig := range cfg.NodeConfig {
@@ -408,7 +411,7 @@ func (c *ContivConf) Init() (err error) {
 			for c.nodeConfigCRD == nil {
 				c.nodeConfigCRD = c.loadNodeConfigFromCRD(c.RemoteDB, c.LocalDB)
 				if c.nodeConfigCRD == nil && c.RemoteDB == nil {
-					return errors.New("nodeConfig CRD is not available")
+					return ErrorNodeConfigNotAvailable
 				}
 				c.Log.Info("Waiting 1sec for NodeConfig CRD to be applied...")
 				time.Sleep(time.Second)

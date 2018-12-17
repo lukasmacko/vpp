@@ -529,37 +529,44 @@ spec:
         # This init container waits until crd node specific configuration has been applied
         - name: wait-forcrdconfig
           env:
-          - name: ETCDPORT
-            value: "32379"
-          - name: ETCDCTL_API
-            value: "3"
+          - name: MICROSERVICE_LABEL
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: CONTIV_CONFIG
+            value: "/etc/contiv/contiv.conf"
+          - name: CONTROLLER_CONFIG
+            value: "/etc/contiv/controller.conf"
+          - name: SERVICE_CONFIG
+            value: "/etc/contiv/service.conf"
+          - name: ETCD_CONFIG
+            value: "/etc/etcd/etcd.conf"
+          - name: BOLT_CONFIG
+            value: "/etc/vpp-agent/bolt.conf"
           {{- if .Values.Arm64Platform }}
-          image: {{ .Values.etcd_arm64.image.repository }}:{{ .Values.etcd_arm64.image.tag }}
+          image: {{ .Values.vswitch_arm64.image.repository }}:{{ .Values.vswitch.image.tag }}
           {{- else }}
-          image: {{ .Values.etcd.image.repository }}:{{ .Values.etcd.image.tag }}
+          image: {{ .Values.vswitch.image.repository }}:{{ .Values.vswitch.image.tag }}
           {{- end }}
+          imagePullPolicy: IfNotPresent
           command:
-          - /bin/sh
+          - /usr/bin/contiv-init
           args:
-          - -c
-          - |
-            set -eu
-          {{- if .Values.etcd.secureTransport }}
-            until /usr/local/bin/etcdctl --endpoints=127.0.0.1:$ETCDPORT get "/vnf-agent/contiv-ksr/k8s/nodeconfig/$HOSTNAME" --prefix=true \
-            --cert=/var/contiv/etcd-secrets/{{ .Values.etcd.secrets.clientCert }} --key=/var/contiv/etcd-secrets/{{ .Values.etcd.secrets.clientKey }} --cacert=/var/contiv/etcd-secrets/{{ .Values.etcd.secrets.caCert }}| grep -m 1 "$HOSTNAME";
-          {{- else }}
-            until /usr/local/bin/etcdctl --endpoints=127.0.0.1:$ETCDPORT get "/vnf-agent/contiv-ksr/k8s/nodeconfig/$HOSTNAME" --prefix=true | grep -m 1 "$HOSTNAME";
-          {{- end }}
-            do
-              echo waiting for crd node config;
-              sleep 1
-            done
-          {{- if .Values.etcd.secureTransport }}
+          - --ensure-nodeconfig-only=true
           volumeMounts:
+          {{- if .Values.etcd.secureTransport }}
           - name: etcd-secrets
             mountPath: /var/contiv/etcd-secrets
             readOnly: true
           {{- end }}
+          - name: var-bolt
+            mountPath: /var/bolt
+          - name: etcd-cfg
+            mountPath: /etc/etcd
+          - name: contiv-agent-cfg
+            mountPath: /etc/contiv
+          - name: vpp-agent-cfg
+            mountPath: /etc/vpp-agent
         {{- end }}
 
         # This init container extracts/copies default VPP config to the host and initializes VPP core dumps.

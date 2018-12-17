@@ -55,6 +55,8 @@ const (
 
 	etcdConnectionRetries = 2 // number of retries to connect to ETCD
 
+	etcdConnectionRetriesEnsureNodeConfigOnly = 20 // number of retries to connect to ETCD in case of ensureNodeConfigOnly
+
 	vmxnet3PreferredDriver = "vfio-pci" // driver required for vmxnet3 interfaces
 )
 
@@ -63,6 +65,10 @@ var (
 	boltCfgFile      = flag.String("bolt-config", defaultBoltCfgFile, "location of the Bolt config file")
 	supervisorSocket = flag.String("supervisor-socket", defaultSupervisorSocket, "management API socket file of the supervisor process")
 	stnServerSocket  = flag.String("stn-server-socket", defaultStnServerSocket, "socket file where STN GRPC server listens for connections")
+
+	// ensureNodeConfigOnly checks waits until nodeConfig is available and exits. Neither agent nor vpp is started.
+	// This flag is supposed to be used initContainer.
+	ensureNodeConfigOnly = flag.Bool("ensure-nodeconfig-only", false, "check that nodeconfig is available in etcd or boltdb and exit")
 )
 
 var logger logging.Logger // global logger
@@ -158,7 +164,7 @@ func (etcd *etcdWithAtomicPut) OnConnect(callback func() error) {
 }
 
 // etcdConnect connects to ETCD db.
-func etcdConnect() (etcdConn nodesync.ClusterWideDB, err error) {
+func etcdConnect(numOfRetryies int) (etcdConn nodesync.ClusterWideDB, err error) {
 	etcdConfig := &etcd.Config{}
 
 	// parse ETCD config file
@@ -177,10 +183,10 @@ func etcdConnect() (etcdConn nodesync.ClusterWideDB, err error) {
 
 	// connect in retry loop
 	var conn *etcd.BytesConnectionEtcd
-	for i := 0; i < etcdConnectionRetries; i++ {
+	for i := 0; i < numOfRetryies; i++ {
 		conn, err = etcd.NewEtcdConnectionWithBytes(*etcdCfg, logger)
 		if err != nil {
-			if i == etcdConnectionRetries-1 {
+			if i == numOfRetryies-1 {
 				logger.Errorf("Error by connecting to ETCD: %v", err)
 				return nil, err
 			}
@@ -288,7 +294,7 @@ func main() {
 	servicelabel.DefaultPlugin.MicroserviceLabel = nodeName
 
 	// try to connect to ETCD db
-	etcdDB, err := etcdConnect()
+	etcdDB, err := etcdConnect(etcdConnectionRetries)
 	if err == nil {
 		defer etcdDB.Close()
 	}
@@ -312,9 +318,24 @@ func main() {
 		RemoteDB: etcdDB,
 	}
 	err = contivConf.Init()
+	if *ensureNodeConfigOnly && (err == contivconf.ErrorNodeConfigNotAvailable) && etcdDB == nil {
+		// retry connecting to etcd in case of initContainer
+		etcdDB, err := etcdConnect(etcdConnectionRetriesEnsureNodeConfigOnly)
+		if err == nil {
+			defer etcdDB.Close()
+		}
+		contivConf.RemoteDB = etcdDB
+		err = contivConf.Init()
+	}
+
 	if err != nil {
 		logger.Errorf("Failed to initialize ContivConf plugin: %v", err)
 		os.Exit(-1)
+	}
+
+	// Exit if we want ensure that node config is available only
+	if *ensureNodeConfigOnly {
+		return
 	}
 
 	// check whether STN is required and get NIC name
