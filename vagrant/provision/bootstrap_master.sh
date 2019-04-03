@@ -110,7 +110,7 @@ sleep 2;
 applySTNScenario() {
   gw="10.130.1.254";
   if [ "${ip_version}" = "ipv6" ]; then
-     gw="fe10::100";
+     gw="fe10::2:100";
   fi
   if [ "${dep_scenario}" = "nostn" ]; then
 
@@ -202,6 +202,13 @@ applyVPPnetwork() {
         --export >> coredns-config.yaml
     sed -i '/loop/d' coredns-config.yaml
     kubectl apply -f coredns-config.yaml -n kube-system
+  elif [[ $ip_version == "ipv6" ]]; then
+    kubectl get configmap coredns \
+        -o yaml \
+        -n kube-system  \
+        --export >> coredns-config.yaml
+    sed -i 's/\/etc\/resolv.conf/fe10::2:100/' coredns-config.yaml
+    kubectl apply -f coredns-config.yaml -n kube-system
   fi
 
   helm_opts="${helm_extra_opts}"
@@ -211,7 +218,8 @@ applyVPPnetwork() {
   fi
 
   if [ "${ip_version}" = "ipv6transport" ] || [ "${ip_version}" = "ipv6" ]; then
-    helm_opts="$helm_opts --set contiv.ipamConfig.nodeInterconnectCIDR=fe10:f00d::/90"
+    helm_opts="$helm_opts --set contiv.ipamConfig.nodeInterconnectCIDR=fe10::2:0/119"
+    helm_opts="$helm_opts --set contiv.ipamConfig.defaultGateway=fe10::2:100"
   fi
   if [ "${ip_version}" = "ipv6" ]; then
      if [ "${crd_disabled}" = "true" ]; then

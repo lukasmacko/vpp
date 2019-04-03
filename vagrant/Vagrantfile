@@ -153,7 +153,9 @@ VAGRANTFILE_API_VERSION = "2"
       # Interface for K8s Cluster
       gw.vm.box = "puppetlabs/ubuntu-16.04-64-nocm"
       gw.vm.box_version = "1.0.0"
-      if dep_scenario == 'nostn'
+      if ip_version == 'ipv6'
+          gw.vm.network :private_network, ip: "fe10::2:100", netmask: "119", virtualbox__intnet: "vpp", nic_type: "82540EM"
+      else if dep_scenario == 'nostn'
         if crd_disabled == 'false'
           gw.vm.network :private_network, ip: "10.130.1.254",  netmask: "255.255.254.0", virtualbox__intnet: "vpp", nic_type: "82540EM"
         else
